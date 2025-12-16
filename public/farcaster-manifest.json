@@ -1,0 +1,16 @@
+{
+  "accountAssociation": {
+    "header": "eyJmaWQiOjEyMzQ1NiwidHlwZSI6ImN1c3RvZHkiLCJrZXkiOiIweC4uLiJ9",
+    "payload": "eyJkb21haW4iOiJiYXNlZmxvdy5hcHAifQ",
+    "signature": "0x..."
+  },
+  "frame": {
+    "version": "1",
+    "name": "BaseFlow",
+    "iconUrl": "/images/icon.png",
+    "splashImageUrl": "/images/splash.png",
+    "splashBackgroundColor": "#0A0B0D",
+    "homeUrl": "/",
+    "webhookUrl": "/api/webhook"
+  }
+}

@@ -1,0 +1,58 @@
+<svg width="1200" height="1200" viewBox="0 0 1200 1200" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="splashBgGrad" x1="0" y1="0" x2="1200" y2="1200">
+      <stop offset="0%" stop-color="#0052FF"/>
+      <stop offset="50%" stop-color="#00D4FF"/>
+      <stop offset="100%" stop-color="#7B61FF"/>
+    </linearGradient>
+    <filter id="splashGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="40" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  
+  <!-- Background -->
+  <rect width="1200" height="1200" fill="#0A0B0D"/>
+  
+  <!-- Large glow effects -->
+  <ellipse cx="600" cy="400" rx="500" ry="400" fill="#0052FF" opacity="0.12" filter="url(#splashGlow)"/>
+  <ellipse cx="300" cy="900" rx="350" ry="250" fill="#7B61FF" opacity="0.1" filter="url(#splashGlow)"/>
+  <ellipse cx="900" cy="800" rx="300" ry="200" fill="#00D4FF" opacity="0.08" filter="url(#splashGlow)"/>
+  
+  <!-- Central logo -->
+  <g transform="translate(400, 300)">
+    <!-- Outer glow ring -->
+    <circle cx="200" cy="200" r="220" stroke="url(#splashBgGrad)" stroke-width="2" fill="none" opacity="0.3"/>
+    <circle cx="200" cy="200" r="280" stroke="url(#splashBgGrad)" stroke-width="1" fill="none" opacity="0.15"/>
+    
+    <!-- Main shield -->
+    <path d="M200 30L60 100V240C60 350 115 430 200 490C285 430 340 350 340 240V100L200 30Z" 
+          stroke="url(#splashBgGrad)" stroke-width="8" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+    
+    <path d="M200 70L90 125V240C90 330 135 400 200 450C265 400 310 330 310 240V125L200 70Z" 
+          fill="#0A0B0D"/>
+    
+    <!-- Flow arrows -->
+    <path d="M130 200L200 270L270 200" stroke="url(#splashBgGrad)" stroke-width="16" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M130 290L200 360L270 290" stroke="url(#splashBgGrad)" stroke-width="16" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity="0.4"/>
+  </g>
+  
+  <!-- BaseFlow text -->
+  <text x="600" y="850" font-family="system-ui, sans-serif" font-size="96" font-weight="700" fill="white" text-anchor="middle">
+    BaseFlow
+  </text>
+  
+  <!-- Tagline -->
+  <text x="600" y="940" font-family="system-ui, sans-serif" font-size="40" fill="url(#splashBgGrad)" text-anchor="middle">
+    Trade Smarter, Flow Faster
+  </text>
+  
+  <!-- Loading indicator -->
+  <g transform="translate(560, 1050)">
+    <rect x="0" y="0" width="80" height="6" rx="3" fill="rgba(255,255,255,0.1)"/>
+    <rect x="0" y="0" width="50" height="6" rx="3" fill="url(#splashBgGrad)"/>
+  </g>
+</svg>

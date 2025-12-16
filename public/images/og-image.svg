@@ -1,0 +1,84 @@
+<svg width="1200" height="630" viewBox="0 0 1200 630" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="ogBgGrad" x1="0" y1="0" x2="1200" y2="630">
+      <stop offset="0%" stop-color="#0052FF"/>
+      <stop offset="50%" stop-color="#00D4FF"/>
+      <stop offset="100%" stop-color="#7B61FF"/>
+    </linearGradient>
+    <linearGradient id="ogTextGrad" x1="0" y1="0" x2="600" y2="0">
+      <stop offset="0%" stop-color="#0052FF"/>
+      <stop offset="50%" stop-color="#00D4FF"/>
+      <stop offset="100%" stop-color="#7B61FF"/>
+    </linearGradient>
+    <filter id="ogGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="30" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <pattern id="grid" width="50" height="50" patternUnits="userSpaceOnUse">
+      <path d="M 50 0 L 0 0 0 50" fill="none" stroke="rgba(255,255,255,0.03)" stroke-width="1"/>
+    </pattern>
+  </defs>
+  
+  <!-- Background -->
+  <rect width="1200" height="630" fill="#0A0B0D"/>
+  <rect width="1200" height="630" fill="url(#grid)"/>
+  
+  <!-- Glow orbs -->
+  <ellipse cx="200" cy="150" rx="300" ry="200" fill="#0052FF" opacity="0.15" filter="url(#ogGlow)"/>
+  <ellipse cx="1000" cy="500" rx="250" ry="180" fill="#7B61FF" opacity="0.12" filter="url(#ogGlow)"/>
+  <ellipse cx="600" cy="600" rx="400" ry="150" fill="#00D4FF" opacity="0.08" filter="url(#ogGlow)"/>
+  
+  <!-- Decorative shapes -->
+  <rect x="50" y="100" width="80" height="80" rx="20" stroke="rgba(0,82,255,0.3)" stroke-width="2" fill="none" transform="rotate(15 90 140)"/>
+  <circle cx="1100" cy="150" r="40" stroke="rgba(123,97,255,0.3)" stroke-width="2" fill="none"/>
+  <rect x="1050" y="450" width="60" height="60" rx="15" stroke="rgba(0,212,255,0.3)" stroke-width="2" fill="none" transform="rotate(-10 1080 480)"/>
+  
+  <!-- Logo icon -->
+  <g transform="translate(100, 180)">
+    <path d="M100 20L30 60V140C30 195 60 240 100 270C140 240 170 195 170 140V60L100 20Z" 
+          stroke="url(#ogBgGrad)" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M100 45L50 75V140C50 185 75 220 100 245C125 220 150 185 150 140V75L100 45Z" 
+          fill="#0A0B0D" opacity="0.9"/>
+    <path d="M65 120L100 155L135 120" stroke="url(#ogTextGrad)" stroke-width="10" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M65 165L100 200L135 165" stroke="url(#ogTextGrad)" stroke-width="10" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity="0.4"/>
+  </g>
+  
+  <!-- Main text -->
+  <text x="320" y="280" font-family="system-ui, sans-serif" font-size="72" font-weight="700" fill="white">
+    BaseFlow
+  </text>
+  
+  <!-- Tagline -->
+  <text x="320" y="350" font-family="system-ui, sans-serif" font-size="36" font-weight="500" fill="url(#ogTextGrad)">
+    Trade Smarter, Flow Faster
+  </text>
+  
+  <!-- Description -->
+  <text x="320" y="420" font-family="system-ui, sans-serif" font-size="24" fill="rgba(255,255,255,0.6)">
+    DEX Aggregator &amp; Trading Automation on Base
+  </text>
+  
+  <!-- Feature pills -->
+  <g transform="translate(320, 460)">
+    <rect x="0" y="0" width="120" height="40" rx="20" fill="rgba(0,82,255,0.2)" stroke="rgba(0,82,255,0.4)" stroke-width="1"/>
+    <text x="60" y="26" font-family="system-ui, sans-serif" font-size="16" fill="white" text-anchor="middle">⚡ Best Rates</text>
+    
+    <rect x="140" y="0" width="100" height="40" rx="20" fill="rgba(0,212,255,0.2)" stroke="rgba(0,212,255,0.4)" stroke-width="1"/>
+    <text x="190" y="26" font-family="system-ui, sans-serif" font-size="16" fill="white" text-anchor="middle">🔄 DCA</text>
+    
+    <rect x="260" y="0" width="130" height="40" rx="20" fill="rgba(123,97,255,0.2)" stroke="rgba(123,97,255,0.4)" stroke-width="1"/>
+    <text x="325" y="26" font-family="system-ui, sans-serif" font-size="16" fill="white" text-anchor="middle">📈 Limit Orders</text>
+    
+    <rect x="410" y="0" width="130" height="40" rx="20" fill="rgba(255,97,220,0.2)" stroke="rgba(255,97,220,0.4)" stroke-width="1"/>
+    <text x="475" y="26" font-family="system-ui, sans-serif" font-size="16" fill="white" text-anchor="middle">🛡️ Stop-Loss</text>
+  </g>
+  
+  <!-- Base badge -->
+  <g transform="translate(1000, 530)">
+    <rect x="0" y="0" width="150" height="50" rx="25" fill="rgba(0,82,255,0.3)" stroke="rgba(0,82,255,0.5)" stroke-width="1"/>
+    <text x="75" y="32" font-family="system-ui, sans-serif" font-size="18" font-weight="600" fill="white" text-anchor="middle">Built on Base</text>
+  </g>
+</svg>

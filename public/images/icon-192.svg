@@ -1,0 +1,24 @@
+<svg width="192" height="192" viewBox="0 0 192 192" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="icon192Grad" x1="0" y1="0" x2="192" y2="192">
+      <stop offset="0%" stop-color="#0052FF"/>
+      <stop offset="50%" stop-color="#00D4FF"/>
+      <stop offset="100%" stop-color="#7B61FF"/>
+    </linearGradient>
+  </defs>
+  
+  <rect width="192" height="192" rx="48" fill="#0A0B0D"/>
+  
+  <!-- Glow -->
+  <circle cx="96" cy="75" r="60" fill="url(#icon192Grad)" opacity="0.15"/>
+  
+  <!-- Shield -->
+  <g transform="translate(36, 26)">
+    <path d="M60 10L20 30V70C20 100 37 125 60 140C83 125 100 100 100 70V30L60 10Z" 
+          stroke="url(#icon192Grad)" stroke-width="4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M60 25L32 40V70C32 95 47 115 60 127C73 115 88 95 88 70V40L60 25Z" 
+          fill="#0A0B0D" opacity="0.9"/>
+    <path d="M42 60L60 78L78 60" stroke="url(#icon192Grad)" stroke-width="5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M42 85L60 103L78 85" stroke="url(#icon192Grad)" stroke-width="5" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity="0.4"/>
+  </g>
+</svg>
