@@ -2,39 +2,31 @@
 const nextConfig = {
   reactStrictMode: true,
   images: {
-    domains: ['*'],
     unoptimized: true,
   },
-  webpack: (config) => {
-    config.resolve.fallback = { 
-      fs: false, 
-      net: false, 
-      tls: false,
-      '@gemini-wallet/core': false,
+  webpack: (config, { isServer }) => {
+    if (!isServer) {
+      config.resolve.fallback = {
+        fs: false,
+        net: false,
+        tls: false,
+        crypto: false,
+      };
+    }
+    // Ignore React Native modules that are not needed for web
+    config.resolve.alias = {
+      ...config.resolve.alias,
+      '@react-native-async-storage/async-storage': false,
     };
-    config.externals.push('pino-pretty', 'lokijs', 'encoding', '@gemini-wallet/core');
+    config.externals.push(
+      'pino-pretty',
+      'encoding',
+      '@solana/kit',
+      '@solana/web3.js',
+      '@gemini-wallet/core',
+      '@coinbase/cdp-sdk'
+    );
     return config;
-  },
-  async headers() {
-    return [
-      {
-        source: '/(.*)',
-        headers: [
-          {
-            key: 'Access-Control-Allow-Origin',
-            value: '*',
-          },
-          {
-            key: 'Access-Control-Allow-Methods',
-            value: 'GET, POST, PUT, DELETE, OPTIONS',
-          },
-          {
-            key: 'Access-Control-Allow-Headers',
-            value: 'Content-Type, Authorization',
-          },
-        ],
-      },
-    ];
   },
 };
 
