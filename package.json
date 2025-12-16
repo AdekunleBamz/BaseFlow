@@ -1,41 +1,31 @@
 {
   "name": "baseflow",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
-    "lint": "next lint",
-    "generate-images": "node scripts/generate-images.js && node scripts/convert-to-png.js"
+    "start": "next start"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
   "dependencies": {
-    "@coinbase/wallet-sdk": "^4.3.7",
-    "@headlessui/react": "^2.2.9",
-    "@metamask/sdk": "^0.34.0",
-    "@reown/appkit": "^1.8.15",
-    "@reown/appkit-adapter-wagmi": "^1.8.15",
-    "@tanstack/react-query": "^5.90.12",
-    "@walletconnect/ethereum-provider": "^2.23.1",
-    "@walletconnect/modal": "^2.7.0",
-    "autoprefixer": "^10.4.23",
-    "clsx": "^2.1.1",
-    "ethers": "^6.16.0",
-    "framer-motion": "^12.23.26",
-    "lucide-react": "^0.561.0",
+    "@headlessui/react": "^1.7.18",
+    "@reown/appkit": "^1.0.0",
+    "@reown/appkit-adapter-wagmi": "^1.0.0",
+    "@tanstack/react-query": "^5.28.0",
+    "clsx": "^2.1.0",
+    "framer-motion": "^11.0.0",
+    "lucide-react": "^0.344.0",
     "next": "^14.2.35",
     "porto": "^0.2.37",
-    "postcss": "^8.5.6",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "sharp": "^0.34.5",
-    "tailwind-merge": "^3.4.0",
-    "tailwindcss": "^3.4.19",
-    "viem": "^2.42.1",
-    "wagmi": "^3.1.0"
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "tailwind-merge": "^2.2.1",
+    "viem": "^2.8.0",
+    "wagmi": "^2.5.0"
+  },
+  "devDependencies": {
+    "autoprefixer": "^10.4.18",
+    "postcss": "^8.4.35",
+    "tailwindcss": "^3.4.1"
   }
 }

@@ -18,6 +18,8 @@ const nextConfig = {
       ...config.resolve.alias,
       '@react-native-async-storage/async-storage': false,
     };
+    // Handle porto internal module resolution
+    config.resolve.alias['porto/internal'] = require.resolve('porto/internal');
     config.externals.push(
       'pino-pretty',
       'encoding',
