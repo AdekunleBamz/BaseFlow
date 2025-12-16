@@ -20,14 +20,10 @@ const nextConfig = {
     };
     // Handle porto internal module resolution
     config.resolve.alias['porto/internal'] = require.resolve('porto/internal');
-    config.externals.push(
-      'pino-pretty',
-      'encoding',
-      '@solana/kit',
-      '@solana/web3.js',
-      '@gemini-wallet/core',
-      '@coinbase/cdp-sdk'
-    );
+    // IMPORTANT:
+    // Do NOT push arbitrary string externals into the client bundle.
+    // It can generate invalid JS like `module.exports = @gemini-wallet/core;`
+    // which breaks chunk loading in the browser.
     return config;
   },
 };
