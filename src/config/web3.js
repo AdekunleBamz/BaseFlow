@@ -34,15 +34,18 @@ if (typeof window !== 'undefined') {
   });
 }
 
+// IMPORTANT: Next may evaluate this module during SSR/bundling.
+// WalletConnect touches localStorage internally, so we MUST only create the WC connector in the browser.
+const isBrowser = typeof window !== 'undefined';
+
 const wagmiConfig = createConfig({
   chains: [base],
   transports: {
     [base.id]: http('https://mainnet.base.org'),
   },
-  connectors: [
-    injected(),
-    walletConnect({ projectId, metadata, showQrModal: false }),
-  ],
+  connectors: isBrowser
+    ? [injected(), walletConnect({ projectId, metadata, showQrModal: false })]
+    : [],
   // Prevent WalletConnect/Wagmi from trying to use localStorage during SSR/build
   ssr: false,
 });
