@@ -142,6 +142,23 @@ export const BASEFLOW_ABI = [
       { name: "tokenIn", type: "address" },
       { name: "tokenOut", type: "address" },
       { name: "amountIn", type: "uint256" },
+      { name: "targetPrice", type: "uint256" },
+      { name: "minAmountOut", type: "uint256" },
+      { name: "expiry", type: "uint256" },
+      { name: "active", type: "bool" }
+    ],
+    stateMutability: "view",
+    type: "function"
+  },
+  {
+    inputs: [{ name: "orderId", type: "uint256" }],
+    name: "stopLossOrders",
+    outputs: [
+      { name: "user", type: "address" },
+      { name: "tokenIn", type: "address" },
+      { name: "tokenOut", type: "address" },
+      { name: "amountIn", type: "uint256" },
+      { name: "stopPrice", type: "uint256" },
       { name: "minAmountOut", type: "uint256" },
       { name: "expiry", type: "uint256" },
       { name: "active", type: "bool" }
@@ -159,6 +176,13 @@ export const BASEFLOW_ABI = [
   {
     inputs: [{ name: "user", type: "address" }],
     name: "getUserLimitOrders",
+    outputs: [{ type: "uint256[]" }],
+    stateMutability: "view",
+    type: "function"
+  },
+  {
+    inputs: [{ name: "user", type: "address" }],
+    name: "getUserStopLossOrders",
     outputs: [{ type: "uint256[]" }],
     stateMutability: "view",
     type: "function"
@@ -217,6 +241,7 @@ export const BASEFLOW_ABI = [
       { name: "_tokenIn", type: "address" },
       { name: "_tokenOut", type: "address" },
       { name: "_amountIn", type: "uint256" },
+      { name: "_targetPrice", type: "uint256" },
       { name: "_minAmountOut", type: "uint256" },
       { name: "_duration", type: "uint256" }
     ],
@@ -226,8 +251,29 @@ export const BASEFLOW_ABI = [
     type: "function"
   },
   {
+    inputs: [
+      { name: "_tokenIn", type: "address" },
+      { name: "_tokenOut", type: "address" },
+      { name: "_amountIn", type: "uint256" },
+      { name: "_stopPrice", type: "uint256" },
+      { name: "_minAmountOut", type: "uint256" },
+      { name: "_duration", type: "uint256" }
+    ],
+    name: "createStopLossOrder",
+    outputs: [{ type: "uint256" }],
+    stateMutability: "payable",
+    type: "function"
+  },
+  {
     inputs: [{ name: "_orderId", type: "uint256" }],
     name: "cancelLimitOrder",
+    outputs: [],
+    stateMutability: "nonpayable",
+    type: "function"
+  },
+  {
+    inputs: [{ name: "_orderId", type: "uint256" }],
+    name: "cancelStopLossOrder",
     outputs: [],
     stateMutability: "nonpayable",
     type: "function"
@@ -313,6 +359,16 @@ export const BASEFLOW_ABI = [
       { indexed: true, name: "user", type: "address" }
     ],
     name: "LimitOrderCreated",
+    type: "event"
+  },
+  {
+    anonymous: false,
+    inputs: [
+      { indexed: true, name: "orderId", type: "uint256" },
+      { indexed: true, name: "user", type: "address" },
+      { indexed: false, name: "stopPrice", type: "uint256" }
+    ],
+    name: "StopLossOrderCreated",
     type: "event"
   },
   {

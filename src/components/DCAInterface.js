@@ -1,10 +1,12 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAppKitAccount } from '@reown/appkit/react';
+import { useReadContract, useReadContracts, useWriteContract, useWaitForTransactionReceipt, useBalance } from 'wagmi';
 import { Clock, ChevronDown, Calendar, Repeat, TrendingUp, AlertCircle, Check, Loader2, Play, Pause, Trash2 } from 'lucide-react';
-import { TOKEN_LIST, TOKENS } from '@/config/contracts';
+import { BASEFLOW_ABI, BASEFLOW_ADDRESS, ERC20_ABI, TOKEN_LIST, TOKENS } from '@/config/contracts';
+import { formatUnits, parseUnits } from 'viem';
 
 const intervals = [
   { id: 'hourly', label: 'Every Hour', seconds: 3600 },
@@ -14,35 +16,14 @@ const intervals = [
   { id: 'monthly', label: 'Monthly', seconds: 2592000 },
 ];
 
-// Mock active orders
-const mockOrders = [
-  {
-    id: 1,
-    tokenIn: TOKENS.ETH,
-    tokenOut: TOKENS.USDC,
-    amountPerInterval: '0.1',
-    interval: 'daily',
-    totalIntervals: 30,
-    completedIntervals: 12,
-    status: 'active',
-    nextExecution: Date.now() + 43200000,
-    totalInvested: '1.2',
-    totalReceived: '3024.50',
-  },
-  {
-    id: 2,
-    tokenIn: TOKENS.USDC,
-    tokenOut: TOKENS.DEGEN,
-    amountPerInterval: '50',
-    interval: 'weekly',
-    totalIntervals: 12,
-    completedIntervals: 4,
-    status: 'active',
-    nextExecution: Date.now() + 259200000,
-    totalInvested: '200',
-    totalReceived: '125000',
-  },
-];
+const isNative = (t) => t?.address === '0x0000000000000000000000000000000000000000';
+
+function tokenFromAddress(addr) {
+  if (!addr) return TOKENS.ETH;
+  if (addr.toLowerCase() === '0x0000000000000000000000000000000000000000') return TOKENS.ETH;
+  const found = TOKEN_LIST.find((t) => t.address.toLowerCase() === addr.toLowerCase());
+  return found || { address: addr, symbol: addr.slice(0, 6), name: addr, decimals: 18 };
+}
 
 export default function DCAInterface() {
   const { address, isConnected } = useAppKitAccount();
@@ -53,39 +34,125 @@ export default function DCAInterface() {
   const [selectedInterval, setSelectedInterval] = useState('daily');
   const [showTokenSelect, setShowTokenSelect] = useState(null);
   const [activeTab, setActiveTab] = useState('create');
-  const [isLoading, setIsLoading] = useState(false);
-  const [orders, setOrders] = useState(mockOrders);
+  const [uiError, setUiError] = useState('');
+  const { writeContract, data: txHash, isPending: isWritePending } = useWriteContract();
+  const { isLoading: isTxConfirming } = useWaitForTransactionReceipt({ hash: txHash });
+  const isLoading = isWritePending || isTxConfirming;
 
   const amountPerInterval = totalAmount && numIntervals
     ? (parseFloat(totalAmount) / parseInt(numIntervals)).toFixed(6)
     : '0';
 
+  const intervalDuration = useMemo(() => {
+    return intervals.find((i) => i.id === selectedInterval)?.seconds ?? 86400;
+  }, [selectedInterval]);
+
+  const { data: tokenInBalance } = useBalance({
+    address: isConnected ? address : undefined,
+    token: !isNative(tokenIn) ? tokenIn.address : undefined,
+    query: { enabled: Boolean(isConnected && address && tokenIn?.address), refetchInterval: 15_000 },
+  });
+
+  const { data: tokenInAllowance } = useReadContract({
+    address: !isNative(tokenIn) ? tokenIn.address : undefined,
+    abi: ERC20_ABI,
+    functionName: 'allowance',
+    args: address && !isNative(tokenIn) ? [address, BASEFLOW_ADDRESS] : undefined,
+    query: { enabled: Boolean(address && !isNative(tokenIn)) },
+  });
+
+  const { data: orderIds } = useReadContract({
+    address: BASEFLOW_ADDRESS,
+    abi: BASEFLOW_ABI,
+    functionName: 'getUserDCAOrders',
+    args: address ? [address] : undefined,
+    query: { enabled: Boolean(address) },
+  });
+
+  const orderReadCalls = useMemo(() => {
+    const ids = Array.isArray(orderIds) ? orderIds : [];
+    return ids.map((id) => ({
+      address: BASEFLOW_ADDRESS,
+      abi: BASEFLOW_ABI,
+      functionName: 'dcaOrders',
+      args: [id],
+    }));
+  }, [orderIds]);
+
+  const { data: dcaOrdersData } = useReadContracts({
+    contracts: orderReadCalls,
+    query: { enabled: orderReadCalls.length > 0 },
+  });
+
+  const orders = useMemo(() => {
+    const ids = Array.isArray(orderIds) ? orderIds : [];
+    const rows = (dcaOrdersData || []).map((r) => r?.result).filter(Boolean);
+    return rows
+      .map((o, idx) => {
+        const id = ids[idx];
+        const tokenInAddr = o.tokenIn;
+        const tokenOutAddr = o.tokenOut;
+        const tIn = tokenFromAddress(tokenInAddr);
+        const tOut = tokenFromAddress(tokenOutAddr);
+        const last = Number(o.lastExecutionTime) * 1000;
+        const nextExecution = last > 0 ? last + Number(o.intervalDuration) * 1000 : Date.now() + Number(o.intervalDuration) * 1000;
+        return {
+          id,
+          tokenIn: tIn,
+          tokenOut: tOut,
+          amountPerInterval: formatUnits(o.amountPerInterval, tIn.decimals),
+          intervalSeconds: Number(o.intervalDuration),
+          intervalsRemaining: Number(o.intervalsRemaining),
+          active: Boolean(o.active),
+          nextExecution,
+        };
+      })
+      .filter((o) => o.active);
+  }, [orderIds, dcaOrdersData]);
+
   const handleCreateOrder = async () => {
     if (!isConnected || !totalAmount) return;
     
-    setIsLoading(true);
-    // Simulate transaction
-    setTimeout(() => {
-      setOrders([
-        {
-          id: orders.length + 1,
-          tokenIn,
-          tokenOut,
-          amountPerInterval,
-          interval: selectedInterval,
-          totalIntervals: parseInt(numIntervals),
-          completedIntervals: 0,
-          status: 'active',
-          nextExecution: Date.now() + intervals.find(i => i.id === selectedInterval).seconds * 1000,
-          totalInvested: '0',
-          totalReceived: '0',
-        },
-        ...orders,
-      ]);
-      setIsLoading(false);
+    try {
+      setUiError('');
+      const totalAmountWei = parseUnits(totalAmount, tokenIn.decimals);
+      const tokenInAddr = isNative(tokenIn) ? '0x0000000000000000000000000000000000000000' : tokenIn.address;
+      const tokenOutAddr = isNative(tokenOut) ? '0x0000000000000000000000000000000000000000' : tokenOut.address;
+
+      if (!isNative(tokenIn)) {
+        const allowance = tokenInAllowance ?? 0n;
+        if (allowance < totalAmountWei) {
+          writeContract({
+            address: tokenIn.address,
+            abi: ERC20_ABI,
+            functionName: 'approve',
+            args: [BASEFLOW_ADDRESS, totalAmountWei],
+          });
+          setUiError('Approval requested. After it confirms, click “Create DCA Order” again.');
+          return;
+        }
+
+        writeContract({
+          address: BASEFLOW_ADDRESS,
+          abi: BASEFLOW_ABI,
+          functionName: 'createDCAOrder',
+          args: [tokenInAddr, tokenOutAddr, totalAmountWei, BigInt(numIntervals), BigInt(intervalDuration)],
+        });
+      } else {
+        writeContract({
+          address: BASEFLOW_ADDRESS,
+          abi: BASEFLOW_ABI,
+          functionName: 'createDCAOrder',
+          args: [tokenInAddr, tokenOutAddr, totalAmountWei, BigInt(numIntervals), BigInt(intervalDuration)],
+          value: totalAmountWei,
+        });
+      }
+
       setTotalAmount('');
       setActiveTab('orders');
-    }, 2000);
+    } catch (e) {
+      setUiError(e?.shortMessage || e?.message || 'Failed to create DCA order');
+    }
   };
 
   const formatTime = (timestamp) => {
@@ -97,6 +164,17 @@ export default function DCAInterface() {
       return `${days}d ${hours % 24}h`;
     }
     return `${hours}h ${minutes}m`;
+  };
+
+  const handleCancelOrder = (orderId) => {
+    if (!isConnected) return;
+    setUiError('');
+    writeContract({
+      address: BASEFLOW_ADDRESS,
+      abi: BASEFLOW_ABI,
+      functionName: 'cancelDCAOrder',
+      args: [orderId],
+    });
   };
 
   return (
@@ -137,9 +215,9 @@ export default function DCAInterface() {
             }`}
           >
             My Orders
-            {orders.filter(o => o.status === 'active').length > 0 && (
+            {orders.length > 0 && (
               <span className="w-5 h-5 rounded-full bg-flow-green/20 text-flow-green text-xs flex items-center justify-center">
-                {orders.filter(o => o.status === 'active').length}
+                {orders.length}
               </span>
             )}
           </button>
@@ -191,7 +269,10 @@ export default function DCAInterface() {
               <div className="p-4 rounded-2xl bg-white/5 border border-white/10 mb-4">
                 <div className="flex justify-between items-center mb-2">
                   <label className="text-sm text-gray-400">Total Amount</label>
-                  <span className="text-xs text-gray-500">Balance: 0.00 {tokenIn.symbol}</span>
+                  <span className="text-xs text-gray-500">
+                    Balance:{' '}
+                    {isConnected ? (tokenInBalance ? Number(tokenInBalance.formatted).toFixed(4) : '0.0000') : '—'} {tokenIn.symbol}
+                  </span>
                 </div>
                 <div className="flex items-center gap-3">
                   <input
@@ -349,36 +430,17 @@ export default function DCAInterface() {
                               {order.tokenIn.symbol} → {order.tokenOut.symbol}
                             </div>
                             <div className="text-xs text-gray-500">
-                              {order.amountPerInterval} {order.tokenIn.symbol} / {order.interval}
+                              {order.amountPerInterval} {order.tokenIn.symbol} / {Math.round(order.intervalSeconds / 3600)}h
                             </div>
                           </div>
                         </div>
                         <span className="badge badge-active">Active</span>
                       </div>
 
-                      {/* Progress */}
-                      <div className="mb-3">
-                        <div className="flex justify-between text-xs mb-1">
-                          <span className="text-gray-500">Progress</span>
-                          <span className="text-gray-400">{order.completedIntervals}/{order.totalIntervals}</span>
-                        </div>
-                        <div className="h-2 rounded-full bg-white/10 overflow-hidden">
-                          <div
-                            className="h-full rounded-full bg-gradient-to-r from-base-blue to-flow-cyan"
-                            style={{ width: `${(order.completedIntervals / order.totalIntervals) * 100}%` }}
-                          />
-                        </div>
-                      </div>
-
-                      {/* Stats */}
-                      <div className="grid grid-cols-2 gap-3 mb-3">
-                        <div className="p-2 rounded-lg bg-white/5">
-                          <div className="text-xs text-gray-500 mb-1">Invested</div>
-                          <div className="font-semibold text-sm">{order.totalInvested} {order.tokenIn.symbol}</div>
-                        </div>
-                        <div className="p-2 rounded-lg bg-white/5">
-                          <div className="text-xs text-gray-500 mb-1">Received</div>
-                          <div className="font-semibold text-sm text-flow-green">{order.totalReceived} {order.tokenOut.symbol}</div>
+                      <div className="p-3 rounded-xl bg-white/5 mb-3">
+                        <div className="flex justify-between text-sm">
+                          <span className="text-gray-500">Intervals remaining</span>
+                          <span className="text-gray-300 font-medium">{order.intervalsRemaining}</span>
                         </div>
                       </div>
 
@@ -389,10 +451,10 @@ export default function DCAInterface() {
                           <span>Next: {formatTime(order.nextExecution)}</span>
                         </div>
                         <div className="flex gap-2">
-                          <button className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white transition-colors">
-                            <Pause size={14} />
-                          </button>
-                          <button className="p-2 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 hover:text-red-300 transition-colors">
+                          <button
+                            onClick={() => handleCancelOrder(order.id)}
+                            className="p-2 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 hover:text-red-300 transition-colors"
+                          >
                             <Trash2 size={14} />
                           </button>
                         </div>

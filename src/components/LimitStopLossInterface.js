@@ -1,10 +1,12 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAppKitAccount } from '@reown/appkit/react';
+import { useBalance, useReadContract, useReadContracts, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { BarChart3, ChevronDown, TrendingUp, TrendingDown, AlertTriangle, Clock, Check, Loader2, Trash2, Shield } from 'lucide-react';
-import { TOKEN_LIST, TOKENS } from '@/config/contracts';
+import { BASEFLOW_ABI, BASEFLOW_ADDRESS, ERC20_ABI, TOKEN_LIST, TOKENS } from '@/config/contracts';
+import { formatUnits, parseUnits } from 'viem';
 
 const durations = [
   { id: '1d', label: '1 Day', seconds: 86400 },
@@ -13,32 +15,24 @@ const durations = [
   { id: '30d', label: '30 Days', seconds: 2592000 },
 ];
 
-// Mock orders
-const mockLimitOrders = [
-  {
-    id: 1,
-    tokenIn: TOKENS.USDC,
-    tokenOut: TOKENS.ETH,
-    amountIn: '5000',
-    targetPrice: '2200',
-    currentPrice: '2450',
-    expiry: Date.now() + 604800000,
-    status: 'active',
-  },
-];
+const isNative = (t) => t?.address === '0x0000000000000000000000000000000000000000';
 
-const mockStopLossOrders = [
-  {
-    id: 1,
-    tokenIn: TOKENS.ETH,
-    tokenOut: TOKENS.USDC,
-    amountIn: '2.5',
-    stopPrice: '2000',
-    currentPrice: '2450',
-    expiry: Date.now() + 1209600000,
-    status: 'active',
-  },
-];
+function tokenFromAddress(addr) {
+  if (!addr) return TOKENS.ETH;
+  if (addr.toLowerCase() === '0x0000000000000000000000000000000000000000') return TOKENS.ETH;
+  const found = TOKEN_LIST.find((t) => t.address.toLowerCase() === addr.toLowerCase());
+  return found || { address: addr, symbol: addr.slice(0, 6), name: addr, decimals: 18 };
+}
+
+// Odos quote helper (Base)
+const ODOS_BASE_URL = 'https://api.odos.xyz';
+const BASE_CHAIN_ID = 8453;
+const ODOS_NATIVE_TOKEN = '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE';
+function toOdosTokenAddress(token) {
+  if (!token?.address) return ODOS_NATIVE_TOKEN;
+  if (token.address === '0x0000000000000000000000000000000000000000') return ODOS_NATIVE_TOKEN;
+  return token.address;
+}
 
 export default function LimitStopLossInterface() {
   const { address, isConnected } = useAppKitAccount();
@@ -50,39 +44,200 @@ export default function LimitStopLossInterface() {
   const [targetPrice, setTargetPrice] = useState('');
   const [selectedDuration, setSelectedDuration] = useState('7d');
   const [showTokenSelect, setShowTokenSelect] = useState(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [limitOrders, setLimitOrders] = useState(mockLimitOrders);
-  const [stopLossOrders, setStopLossOrders] = useState(mockStopLossOrders);
+  const [uiError, setUiError] = useState('');
+  const { writeContract, data: txHash, isPending: isWritePending } = useWriteContract();
+  const { isLoading: isTxConfirming } = useWaitForTransactionReceipt({ hash: txHash });
+  const isLoading = isWritePending || isTxConfirming;
 
-  const currentPrice = '2450'; // Mock current price
+  const durationSeconds = useMemo(() => {
+    return durations.find((d) => d.id === selectedDuration)?.seconds ?? 604800;
+  }, [selectedDuration]);
+
+  const { data: tokenInBalance } = useBalance({
+    address: isConnected ? address : undefined,
+    token: !isNative(tokenIn) ? tokenIn.address : undefined,
+    query: { enabled: Boolean(isConnected && address && tokenIn?.address), refetchInterval: 15_000 },
+  });
+
+  const { data: tokenInAllowance } = useReadContract({
+    address: !isNative(tokenIn) ? tokenIn.address : undefined,
+    abi: ERC20_ABI,
+    functionName: 'allowance',
+    args: address && !isNative(tokenIn) ? [address, BASEFLOW_ADDRESS] : undefined,
+    query: { enabled: Boolean(address && !isNative(tokenIn)) },
+  });
+
+  const { data: limitOrderIds } = useReadContract({
+    address: BASEFLOW_ADDRESS,
+    abi: BASEFLOW_ABI,
+    functionName: 'getUserLimitOrders',
+    args: address ? [address] : undefined,
+    query: { enabled: Boolean(address) },
+  });
+
+  const { data: stopLossOrderIds } = useReadContract({
+    address: BASEFLOW_ADDRESS,
+    abi: BASEFLOW_ABI,
+    functionName: 'getUserStopLossOrders',
+    args: address ? [address] : undefined,
+    query: { enabled: Boolean(address) },
+  });
+
+  const limitOrderCalls = useMemo(() => {
+    const ids = Array.isArray(limitOrderIds) ? limitOrderIds : [];
+    return ids.map((id) => ({
+      address: BASEFLOW_ADDRESS,
+      abi: BASEFLOW_ABI,
+      functionName: 'limitOrders',
+      args: [id],
+    }));
+  }, [limitOrderIds]);
+
+  const stopLossOrderCalls = useMemo(() => {
+    const ids = Array.isArray(stopLossOrderIds) ? stopLossOrderIds : [];
+    return ids.map((id) => ({
+      address: BASEFLOW_ADDRESS,
+      abi: BASEFLOW_ABI,
+      functionName: 'stopLossOrders',
+      args: [id],
+    }));
+  }, [stopLossOrderIds]);
+
+  const { data: limitOrdersData } = useReadContracts({
+    contracts: limitOrderCalls,
+    query: { enabled: limitOrderCalls.length > 0 },
+  });
+
+  const { data: stopLossOrdersData } = useReadContracts({
+    contracts: stopLossOrderCalls,
+    query: { enabled: stopLossOrderCalls.length > 0 },
+  });
+
+  const limitOrders = useMemo(() => {
+    const ids = Array.isArray(limitOrderIds) ? limitOrderIds : [];
+    const rows = (limitOrdersData || []).map((r) => r?.result).filter(Boolean);
+    return rows
+      .map((o, idx) => {
+        const id = ids[idx];
+        const tIn = tokenFromAddress(o.tokenIn);
+        const tOut = tokenFromAddress(o.tokenOut);
+        return {
+          id,
+          tokenIn: tIn,
+          tokenOut: tOut,
+          amountIn: formatUnits(o.amountIn, tIn.decimals),
+          targetPrice: o.targetPrice, // 1e18 scaled tokenOut per tokenIn
+          minAmountOut: o.minAmountOut,
+          expiry: Number(o.expiry) * 1000,
+          active: Boolean(o.active),
+        };
+      })
+      .filter((o) => o.active);
+  }, [limitOrderIds, limitOrdersData]);
+
+  const stopLossOrders = useMemo(() => {
+    const ids = Array.isArray(stopLossOrderIds) ? stopLossOrderIds : [];
+    const rows = (stopLossOrdersData || []).map((r) => r?.result).filter(Boolean);
+    return rows
+      .map((o, idx) => {
+        const id = ids[idx];
+        const tIn = tokenFromAddress(o.tokenIn);
+        const tOut = tokenFromAddress(o.tokenOut);
+        return {
+          id,
+          tokenIn: tIn,
+          tokenOut: tOut,
+          amountIn: formatUnits(o.amountIn, tIn.decimals),
+          stopPrice: o.stopPrice, // 1e18 scaled tokenOut per tokenIn
+          minAmountOut: o.minAmountOut,
+          expiry: Number(o.expiry) * 1000,
+          active: Boolean(o.active),
+        };
+      })
+      .filter((o) => o.active);
+  }, [stopLossOrderIds, stopLossOrdersData]);
+
+  const currentPrice = useMemo(() => {
+    // UI uses this as display-only; the contract itself uses keeper-provided price.
+    // We'll show the user's entered threshold as-is.
+    return '—';
+  }, []);
 
   const handleCreateOrder = async () => {
     if (!isConnected || !amountIn || !targetPrice) return;
-    
-    setIsLoading(true);
-    setTimeout(() => {
-      const newOrder = {
-        id: Date.now(),
-        tokenIn,
-        tokenOut,
-        amountIn,
-        [activeType === 'limit' ? 'targetPrice' : 'stopPrice']: targetPrice,
-        currentPrice,
-        expiry: Date.now() + durations.find(d => d.id === selectedDuration).seconds * 1000,
-        status: 'active',
-      };
+    try {
+      setUiError('');
+      const amountInWei = parseUnits(amountIn, tokenIn.decimals);
+      const tokenInAddr = isNative(tokenIn) ? '0x0000000000000000000000000000000000000000' : tokenIn.address;
+      const tokenOutAddr = isNative(tokenOut) ? '0x0000000000000000000000000000000000000000' : tokenOut.address;
+
+      // Convert "targetPrice" input (tokenOut per tokenIn) into 1e18 scaled integer expected by contract
+      // Example: targetPrice=0.0004 (ETH per USDC) => 0.0004 * 1e18
+      const priceScaled = BigInt(Math.floor(Number(targetPrice) * 1e18));
+
+      // Best-effort minAmountOut via Odos quote (fallback to 0)
+      let minAmountOut = 0n;
+      try {
+        const body = {
+          chainId: BASE_CHAIN_ID,
+          inputTokens: [{ tokenAddress: toOdosTokenAddress(tokenIn), amount: amountInWei.toString() }],
+          outputTokens: [{ tokenAddress: toOdosTokenAddress(tokenOut), proportion: 1 }],
+          slippageLimitPercent: 0.5,
+          compact: true,
+        };
+        const res = await fetch(`${ODOS_BASE_URL}/sor/quote/v2`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const out = data?.outAmounts?.[0] ?? data?.outputTokens?.[0]?.amount;
+          if (out) {
+            const outBn = BigInt(out);
+            minAmountOut = (outBn * 995n) / 1000n; // 0.5% slippage
+          }
+        }
+      } catch {}
+
+      if (!isNative(tokenIn)) {
+        const allowance = tokenInAllowance ?? 0n;
+        if (allowance < amountInWei) {
+          writeContract({
+            address: tokenIn.address,
+            abi: ERC20_ABI,
+            functionName: 'approve',
+            args: [BASEFLOW_ADDRESS, amountInWei],
+          });
+          setUiError('Approval requested. After it confirms, click “Create” again.');
+          return;
+        }
+      }
 
       if (activeType === 'limit') {
-        setLimitOrders([newOrder, ...limitOrders]);
+        writeContract({
+          address: BASEFLOW_ADDRESS,
+          abi: BASEFLOW_ABI,
+          functionName: 'createLimitOrder',
+          args: [tokenInAddr, tokenOutAddr, amountInWei, priceScaled, minAmountOut, BigInt(durationSeconds)],
+          value: isNative(tokenIn) ? amountInWei : undefined,
+        });
       } else {
-        setStopLossOrders([newOrder, ...stopLossOrders]);
+        writeContract({
+          address: BASEFLOW_ADDRESS,
+          abi: BASEFLOW_ABI,
+          functionName: 'createStopLossOrder',
+          args: [tokenInAddr, tokenOutAddr, amountInWei, priceScaled, minAmountOut, BigInt(durationSeconds)],
+          value: isNative(tokenIn) ? amountInWei : undefined,
+        });
       }
-      
-      setIsLoading(false);
+
       setAmountIn('');
       setTargetPrice('');
       setActiveTab('orders');
-    }, 2000);
+    } catch (e) {
+      setUiError(e?.shortMessage || e?.message || 'Failed to create order');
+    }
   };
 
   const formatExpiry = (timestamp) => {
@@ -100,6 +255,17 @@ export default function LimitStopLossInterface() {
   };
 
   const orders = activeType === 'limit' ? limitOrders : stopLossOrders;
+
+  const handleCancel = (orderId) => {
+    if (!isConnected) return;
+    setUiError('');
+    writeContract({
+      address: BASEFLOW_ADDRESS,
+      abi: BASEFLOW_ABI,
+      functionName: activeType === 'limit' ? 'cancelLimitOrder' : 'cancelStopLossOrder',
+      args: [orderId],
+    });
+  };
 
   return (
     <div id={activeType === 'limit' ? 'limit' : 'stoploss'} className="relative">
@@ -257,7 +423,10 @@ export default function LimitStopLossInterface() {
               <div className="p-4 rounded-2xl bg-white/5 border border-white/10 mb-4">
                 <div className="flex justify-between items-center mb-2">
                   <label className="text-sm text-gray-400">Amount</label>
-                  <span className="text-xs text-gray-500">Balance: 0.00 {tokenIn.symbol}</span>
+                  <span className="text-xs text-gray-500">
+                    Balance:{' '}
+                    {isConnected ? (tokenInBalance ? Number(tokenInBalance.formatted).toFixed(4) : '0.0000') : '—'} {tokenIn.symbol}
+                  </span>
                 </div>
                 <div className="flex items-center gap-3">
                   <input
@@ -445,7 +614,10 @@ export default function LimitStopLossInterface() {
                             <Clock size={12} />
                             Expires: {formatExpiry(order.expiry)}
                           </span>
-                          <button className="p-2 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 hover:text-red-300 transition-colors">
+                          <button
+                            onClick={() => handleCancel(order.id)}
+                            className="p-2 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 hover:text-red-300 transition-colors"
+                          >
                             <Trash2 size={14} />
                           </button>
                         </div>
