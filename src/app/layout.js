@@ -1,5 +1,5 @@
 import './globals.css';
-import { Web3Provider } from '@/config/web3';
+import ClientProviders from './ClientProviders';
 
 export const metadata = {
   title: 'BaseFlow | Trade Smarter, Flow Faster',
@@ -83,9 +83,9 @@ export default function RootLayout({ children }) {
         <meta name="farcaster:manifest" content="/farcaster-manifest.json" />
       </head>
       <body className="antialiased">
-        <Web3Provider>
+        <ClientProviders>
           {children}
-        </Web3Provider>
+        </ClientProviders>
       </body>
     </html>
   );

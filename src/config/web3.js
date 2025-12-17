@@ -17,26 +17,30 @@ const metadata = {
   icons: ['/images/icon.png'],
 };
 
+// IMPORTANT: Next may evaluate this module during SSR/bundling.
+const isBrowser = typeof window !== 'undefined';
+const runtimeMetadata = isBrowser ? { ...metadata, url: window.location.origin } : metadata;
+
 // IMPORTANT:
 // - `useAppKit()` / `useAppKitAccount()` requires `createAppKit()` to be called first.
 // - We must NOT touch browser-only APIs (like localStorage) during SSR/build.
 // So we initialize AppKit at module-load, but only in the browser.
-if (typeof window !== 'undefined') {
+if (isBrowser) {
+  // Avoid double-initialization during Fast Refresh
+  if (!globalThis.__BASEFLOW_APPKIT_INITIALIZED__) {
+    globalThis.__BASEFLOW_APPKIT_INITIALIZED__ = true;
   createAppKit({
     adapters: [new WagmiAdapter({ projectId, networks: [base] })],
     networks: [base],
     projectId,
-    metadata: { ...metadata, url: window.location.origin },
+    metadata: runtimeMetadata,
     features: {
       analytics: false,
     },
     themeMode: 'dark',
   });
+  }
 }
-
-// IMPORTANT: Next may evaluate this module during SSR/bundling.
-// WalletConnect touches localStorage internally, so we MUST only create the WC connector in the browser.
-const isBrowser = typeof window !== 'undefined';
 
 const wagmiConfig = createConfig({
   chains: [base],
@@ -44,7 +48,7 @@ const wagmiConfig = createConfig({
     [base.id]: http('https://mainnet.base.org'),
   },
   connectors: isBrowser
-    ? [injected(), walletConnect({ projectId, metadata, showQrModal: false })]
+    ? [injected(), walletConnect({ projectId, metadata: runtimeMetadata, showQrModal: false })]
     : [],
   // Prevent WalletConnect/Wagmi from trying to use localStorage during SSR/build
   ssr: false,
