@@ -3,8 +3,10 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAppKitAccount } from '@reown/appkit/react';
+import { useBalance } from 'wagmi';
 import { ArrowDownUp, Settings, ChevronDown, Loader2, Zap, TrendingUp, AlertCircle, Check } from 'lucide-react';
 import { TOKEN_LIST, TOKENS, DEX_ROUTERS } from '@/config/contracts';
+import { formatUnits, parseUnits } from 'viem';
 
 const dexOptions = [
   { id: 'auto', name: 'Best Rate (Auto)', icon: '⚡' },
@@ -13,6 +15,17 @@ const dexOptions = [
   { id: 'baseswap', name: 'BaseSwap', icon: '🔄', router: DEX_ROUTERS.baseSwap },
   { id: 'sushi', name: 'SushiSwap', icon: '🍣', router: DEX_ROUTERS.sushiswap },
 ];
+
+const ODOS_BASE_URL = 'https://api.odos.xyz';
+const BASE_CHAIN_ID = 8453;
+const ODOS_NATIVE_TOKEN = '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE';
+
+function toOdosTokenAddress(token) {
+  if (!token?.address) return ODOS_NATIVE_TOKEN;
+  // We store ETH as 0x000... which is not accepted by most quote APIs
+  if (token.address === '0x0000000000000000000000000000000000000000') return ODOS_NATIVE_TOKEN;
+  return token.address;
+}
 
 export default function SwapInterface() {
   const { address, isConnected } = useAppKitAccount();
@@ -27,41 +40,133 @@ export default function SwapInterface() {
   const [isLoading, setIsLoading] = useState(false);
   const [quotes, setQuotes] = useState([]);
   const [txStatus, setTxStatus] = useState(null);
+  const [quoteError, setQuoteError] = useState('');
 
-  // Simulated quote fetching
+  const isNative = (t) => t?.address === '0x0000000000000000000000000000000000000000';
+
+  const {
+    data: tokenInBalance,
+    isLoading: tokenInBalanceLoading,
+  } = useBalance({
+    address: isConnected ? address : undefined,
+    token: !isNative(tokenIn) ? tokenIn.address : undefined,
+    query: {
+      enabled: Boolean(isConnected && address && tokenIn?.address),
+      refetchInterval: 15_000,
+    },
+  });
+
+  const {
+    data: tokenOutBalance,
+    isLoading: tokenOutBalanceLoading,
+  } = useBalance({
+    address: isConnected ? address : undefined,
+    token: !isNative(tokenOut) ? tokenOut.address : undefined,
+    query: {
+      enabled: Boolean(isConnected && address && tokenOut?.address),
+      refetchInterval: 15_000,
+    },
+  });
+
+  const formatBalance = (b) => {
+    if (!b) return '0.00';
+    const v = Number(b.formatted);
+    if (!Number.isFinite(v)) return '0.00';
+    if (v === 0) return '0.00';
+    if (v < 0.0001) return '<0.0001';
+    if (v < 1) return v.toFixed(4);
+    return v.toFixed(2);
+  };
+
+  // Real quote fetching (Base mainnet) via Odos Smart Order Router
   useEffect(() => {
     if (amountIn && parseFloat(amountIn) > 0) {
       setIsLoading(true);
-      // Simulate API call to get quotes from different DEXs
       const timer = setTimeout(() => {
-        const mockQuotes = dexOptions
-          .filter(d => d.id !== 'auto')
-          .map(dex => ({
-            dex: dex.id,
-            name: dex.name,
-            icon: dex.icon,
-            amountOut: (parseFloat(amountIn) * (2500 + Math.random() * 100)).toFixed(2),
-            gasEstimate: (0.001 + Math.random() * 0.002).toFixed(4),
-            priceImpact: (Math.random() * 0.5).toFixed(2),
-          }))
-          .sort((a, b) => parseFloat(b.amountOut) - parseFloat(a.amountOut));
-        
-        setQuotes(mockQuotes);
-        if (selectedDex === 'auto') {
-          setAmountOut(mockQuotes[0]?.amountOut || '0');
-        } else {
-          const selected = mockQuotes.find(q => q.dex === selectedDex);
-          setAmountOut(selected?.amountOut || '0');
-        }
-        setIsLoading(false);
+        (async () => {
+          try {
+            setQuoteError('');
+
+            // If tokens are the same, output equals input
+            if (tokenIn.address === tokenOut.address) {
+              setQuotes([]);
+              setAmountOut(amountIn);
+              return;
+            }
+
+            const amountInWei = parseUnits(amountIn, tokenIn.decimals);
+
+            const body = {
+              chainId: BASE_CHAIN_ID,
+              inputTokens: [
+                {
+                  tokenAddress: toOdosTokenAddress(tokenIn),
+                  amount: amountInWei.toString(),
+                },
+              ],
+              outputTokens: [
+                {
+                  tokenAddress: toOdosTokenAddress(tokenOut),
+                  proportion: 1,
+                },
+              ],
+              slippageLimitPercent: Number(slippage || '0.5'),
+              // Odos recommends enabling this for better routing
+              compact: true,
+            };
+
+            const res = await fetch(`${ODOS_BASE_URL}/sor/quote/v2`, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify(body),
+            });
+
+            if (!res.ok) {
+              const text = await res.text();
+              throw new Error(text || `Quote failed (${res.status})`);
+            }
+
+            const data = await res.json();
+
+            // Odos returns outputTokens with amount for each output token
+            const out = data?.outAmounts?.[0] ?? data?.outputTokens?.[0]?.amount;
+            if (!out) throw new Error('Quote missing output amount');
+
+            const outFormatted = formatUnits(BigInt(out), tokenOut.decimals);
+            setAmountOut(outFormatted);
+
+            const gasEstimateWei = data?.gasEstimate ?? data?.gasEstimateValue;
+            const gasEth = gasEstimateWei ? formatUnits(BigInt(gasEstimateWei), 18) : null;
+
+            // We show a single “best route” quote for now (real), instead of fake per-DEX quotes
+            const bestQuote = {
+              dex: 'odos',
+              name: 'Best route (Odos)',
+              icon: '⚡',
+              amountOut: outFormatted,
+              gasEstimate: gasEth ? Number(gasEth).toFixed(6) : '—',
+              priceImpact: data?.priceImpactPercent != null ? Number(data.priceImpactPercent).toFixed(2) : '—',
+            };
+
+            setQuotes([bestQuote]);
+            setSelectedDex('auto');
+          } catch (e) {
+            setQuoteError(e?.message || 'Failed to fetch quote');
+            setQuotes([]);
+            setAmountOut('');
+          } finally {
+            setIsLoading(false);
+          }
+        })();
       }, 500);
       
       return () => clearTimeout(timer);
     } else {
       setAmountOut('');
       setQuotes([]);
+      setQuoteError('');
     }
-  }, [amountIn, tokenIn, tokenOut, selectedDex]);
+  }, [amountIn, tokenIn, tokenOut, slippage]);
 
   const switchTokens = () => {
     const temp = tokenIn;
@@ -170,7 +275,12 @@ export default function SwapInterface() {
           <div className="flex justify-between items-start mb-3">
             <TokenSelector token={tokenIn} label="You Pay" />
             <div className="text-right">
-              <span className="text-xs text-gray-500">Balance: 0.00</span>
+              <span className="text-xs text-gray-500">
+                Balance:{' '}
+                {isConnected
+                  ? (tokenInBalanceLoading ? '…' : formatBalance(tokenInBalance))
+                  : '—'}
+              </span>
             </div>
           </div>
           <div className="flex items-center gap-4">
@@ -206,7 +316,12 @@ export default function SwapInterface() {
           <div className="flex justify-between items-start mb-3">
             <TokenSelector token={tokenOut} label="You Receive" />
             <div className="text-right">
-              <span className="text-xs text-gray-500">Balance: 0.00</span>
+              <span className="text-xs text-gray-500">
+                Balance:{' '}
+                {isConnected
+                  ? (tokenOutBalanceLoading ? '…' : formatBalance(tokenOutBalance))
+                  : '—'}
+              </span>
             </div>
           </div>
           <div className="flex items-center gap-4">
@@ -228,7 +343,7 @@ export default function SwapInterface() {
         </div>
 
         {/* DEX Selection */}
-        {quotes.length > 0 && (
+        {(quoteError || quotes.length > 0) && (
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
@@ -236,18 +351,25 @@ export default function SwapInterface() {
           >
             <div className="flex items-center justify-between mb-3">
               <span className="text-sm text-gray-400">Route</span>
-              <span className="text-xs text-flow-green flex items-center gap-1">
-                <TrendingUp size={12} />
-                Best price via {quotes[0].name}
-              </span>
+              {quotes.length > 0 ? (
+                <span className="text-xs text-flow-green flex items-center gap-1">
+                  <TrendingUp size={12} />
+                  Best price via {quotes[0].name}
+                </span>
+              ) : (
+                <span className="text-xs text-red-400 flex items-center gap-1">
+                  <AlertCircle size={12} />
+                  {quoteError}
+                </span>
+              )}
             </div>
             <div className="space-y-2">
-              {quotes.slice(0, 3).map((quote, index) => (
+              {quotes.slice(0, 1).map((quote) => (
                 <button
                   key={quote.dex}
-                  onClick={() => setSelectedDex(quote.dex)}
+                  onClick={() => setSelectedDex('auto')}
                   className={`w-full flex items-center justify-between p-3 rounded-xl transition-all ${
-                    (selectedDex === 'auto' && index === 0) || selectedDex === quote.dex
+                    true
                       ? 'bg-base-blue/20 border border-base-blue/50'
                       : 'bg-white/5 border border-transparent hover:border-white/10'
                   }`}
@@ -260,12 +382,10 @@ export default function SwapInterface() {
                     </div>
                   </div>
                   <div className="text-right">
-                    <div className="font-semibold">{quote.amountOut}</div>
+                    <div className="font-semibold">{Number(quote.amountOut).toFixed(6)} {tokenOut.symbol}</div>
                     <div className="text-xs text-gray-500">{quote.priceImpact}% impact</div>
                   </div>
-                  {((selectedDex === 'auto' && index === 0) || selectedDex === quote.dex) && (
-                    <Check size={16} className="text-flow-green ml-2" />
-                  )}
+                  <Check size={16} className="text-flow-green ml-2" />
                 </button>
               ))}
             </div>
@@ -313,7 +433,7 @@ export default function SwapInterface() {
             <div className="flex justify-between text-gray-400">
               <span>Rate</span>
               <span className="text-white">
-                1 {tokenIn.symbol} ≈ {(parseFloat(amountOut) / parseFloat(amountIn)).toFixed(2)} {tokenOut.symbol}
+                1 {tokenIn.symbol} ≈ {(parseFloat(amountOut) / parseFloat(amountIn)).toFixed(6)} {tokenOut.symbol}
               </span>
             </div>
             <div className="flex justify-between text-gray-400">
