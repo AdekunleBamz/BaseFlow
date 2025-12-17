@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import Header from '@/components/Header';
 import Hero from '@/components/Hero';
@@ -16,15 +16,35 @@ const tradingModes = [
   { id: 'advanced', label: 'Advanced', icon: Layers, color: 'from-flow-purple to-flow-pink' },
 ];
 
-export default function HomeClient() {
-  const [activeMode, setActiveMode] = useState('swap');
+export default function HomeClient({ initialMode = 'swap' }) {
+  const [activeMode, setActiveMode] = useState(initialMode);
+
+  useEffect(() => {
+    const handler = (e) => {
+      const mode = e?.detail?.mode;
+      if (mode) setActiveMode(mode);
+      const targetId = e?.detail?.scrollToId;
+      if (targetId) {
+        const el = document.getElementById(targetId);
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    };
+    window.addEventListener('baseflow:navigate', handler);
+    return () => window.removeEventListener('baseflow:navigate', handler);
+  }, []);
 
   return (
     <main className="min-h-screen">
       <Header />
 
       {/* Hero Section */}
-      <Hero />
+      <Hero onNavigate={(mode, scrollToId) => {
+        setActiveMode(mode || 'swap');
+        if (scrollToId) {
+          const el = document.getElementById(scrollToId);
+          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      }} />
 
       {/* Trading Section */}
       <section id="features" className="relative py-20 overflow-hidden">

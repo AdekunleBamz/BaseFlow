@@ -2,6 +2,7 @@
 
 import { motion } from 'framer-motion';
 import { useAppKit } from '@reown/appkit/react';
+import { useAppKitAccount } from '@reown/appkit/react';
 import { ArrowRight, Zap, Shield, Clock, TrendingUp, Sparkles } from 'lucide-react';
 
 const features = [
@@ -38,8 +39,9 @@ const stats = [
   { value: '4', label: 'DEXs Integrated', suffix: '' },
 ];
 
-export default function Hero() {
+export default function Hero({ onNavigate }) {
   const { open } = useAppKit();
+  const { isConnected } = useAppKitAccount();
 
   return (
     <section className="relative min-h-screen flex flex-col justify-center pt-24 pb-12 overflow-hidden">
@@ -145,7 +147,19 @@ export default function Hero() {
           <motion.button
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
-            onClick={() => open()}
+            onClick={() => {
+              // If wallet is already connected, take the user straight to Swap UI.
+              if (isConnected) {
+                onNavigate?.('swap', 'swap');
+                // Also dispatch a global event (works even if prop not passed)
+                window.dispatchEvent(new CustomEvent('baseflow:navigate', { detail: { mode: 'swap', scrollToId: 'swap' } }));
+                return;
+              }
+              open();
+              // After opening, still guide user to the trading section
+              onNavigate?.('swap', 'swap');
+              window.dispatchEvent(new CustomEvent('baseflow:navigate', { detail: { mode: 'swap', scrollToId: 'swap' } }));
+            }}
             className="group relative px-8 py-4 rounded-2xl font-display font-semibold text-lg overflow-hidden"
           >
             <div className="absolute inset-0 bg-gradient-to-r from-base-blue via-flow-cyan to-flow-purple bg-[length:200%_100%] animate-gradient" />
