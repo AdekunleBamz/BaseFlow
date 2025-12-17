@@ -1,11 +1,11 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAppKitAccount } from '@reown/appkit/react';
-import { useBalance } from 'wagmi';
+import { useBalance, useReadContract, useSendTransaction, useWaitForTransactionReceipt, useWriteContract } from 'wagmi';
 import { ArrowDownUp, Settings, ChevronDown, Loader2, Zap, TrendingUp, AlertCircle, Check } from 'lucide-react';
-import { TOKEN_LIST, TOKENS, DEX_ROUTERS } from '@/config/contracts';
+import { ERC20_ABI, TOKEN_LIST, TOKENS, DEX_ROUTERS } from '@/config/contracts';
 import { formatUnits, parseUnits } from 'viem';
 
 const dexOptions = [
@@ -16,17 +16,8 @@ const dexOptions = [
   { id: 'sushi', name: 'SushiSwap', icon: '🍣', router: DEX_ROUTERS.sushiswap },
 ];
 
-const ODOS_BASE_URL = 'https://api.odos.xyz';
 const BASE_CHAIN_ID = 8453;
-const ODOS_NATIVE_TOKEN = '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE';
 const BASE_WETH = '0x4200000000000000000000000000000000000006';
-
-function toOdosTokenAddress(token) {
-  if (!token?.address) return ODOS_NATIVE_TOKEN;
-  // We store ETH as 0x000... which is not accepted by most quote APIs
-  if (token.address === '0x0000000000000000000000000000000000000000') return ODOS_NATIVE_TOKEN;
-  return token.address;
-}
 
 function toLlamaTokenAddress(token) {
   if (!token?.address) return BASE_WETH;
@@ -64,8 +55,24 @@ export default function SwapInterface() {
   const [quotes, setQuotes] = useState([]);
   const [txStatus, setTxStatus] = useState(null);
   const [quoteError, setQuoteError] = useState('');
+  const [swapTx, setSwapTx] = useState(null); // { to, data, value, allowanceTarget, sources[] }
+  const [usd, setUsd] = useState({ inUsd: null, outUsd: null });
 
   const isNative = (t) => t?.address === '0x0000000000000000000000000000000000000000';
+  const tokenInAddr = isNative(tokenIn) ? 'ETH' : tokenIn.address;
+  const tokenOutAddr = isNative(tokenOut) ? 'ETH' : tokenOut.address;
+
+  const { sendTransactionAsync, data: swapHash, isPending: swapSending } = useSendTransaction();
+  const { writeContractAsync } = useWriteContract();
+  const { isLoading: swapConfirming } = useWaitForTransactionReceipt({ hash: swapHash });
+
+  const { data: allowance } = useReadContract({
+    address: !isNative(tokenIn) ? tokenIn.address : undefined,
+    abi: ERC20_ABI,
+    functionName: 'allowance',
+    args: address && !isNative(tokenIn) && swapTx?.allowanceTarget ? [address, swapTx.allowanceTarget] : undefined,
+    query: { enabled: Boolean(address && !isNative(tokenIn) && swapTx?.allowanceTarget) },
+  });
 
   const {
     data: tokenInBalance,
@@ -101,7 +108,7 @@ export default function SwapInterface() {
     return v.toFixed(2);
   };
 
-  // Real quote fetching (Base mainnet) via Odos Smart Order Router
+  // Real quote fetching (Base mainnet) via 0x Swap API (gives calldata + router sources).
   useEffect(() => {
     if (amountIn && parseFloat(amountIn) > 0) {
       setIsLoading(true);
@@ -109,6 +116,7 @@ export default function SwapInterface() {
         (async () => {
           try {
             setQuoteError('');
+            setSwapTx(null);
 
             // If tokens are the same, output equals input
             if (tokenIn.address === tokenOut.address) {
@@ -119,62 +127,65 @@ export default function SwapInterface() {
 
             const amountInWei = parseUnits(amountIn, tokenIn.decimals);
 
-            const body = {
-              chainId: BASE_CHAIN_ID,
-              inputTokens: [
-                {
-                  tokenAddress: toOdosTokenAddress(tokenIn),
-                  amount: amountInWei.toString(),
-                },
-              ],
-              outputTokens: [
-                {
-                  tokenAddress: toOdosTokenAddress(tokenOut),
-                  proportion: 1,
-                },
-              ],
-              slippageLimitPercent: Number(slippage || '0.5'),
-              // Odos recommends enabling this for better routing
-              compact: true,
-            };
-
-            const res = await fetch(`${ODOS_BASE_URL}/sor/quote/v2`, {
-              method: 'POST',
-              headers: { 'content-type': 'application/json' },
-              body: JSON.stringify(body),
+            const params = new URLSearchParams({
+              sellToken: tokenInAddr,
+              buyToken: tokenOutAddr,
+              sellAmount: amountInWei.toString(),
+              slippagePercentage: String((Number(slippage || '0.5') / 100).toFixed(4)),
+              takerAddress: address || '',
             });
 
-            if (!res.ok) {
-              const text = await res.text();
-              throw new Error(text || `Quote failed (${res.status})`);
-            }
-
+            // 0x Swap API on Base (public). If this endpoint changes, we can swap to another quote provider.
+            const res = await fetch(`https://base.api.0x.org/swap/v1/quote?${params.toString()}`);
             const data = await res.json();
+            if (!res.ok) throw new Error(data?.reason || data?.validationErrors?.[0]?.reason || 'Error getting quote');
 
-            // Odos returns outputTokens with amount for each output token
-            const out = data?.outAmounts?.[0] ?? data?.outputTokens?.[0]?.amount;
-            if (!out) throw new Error('Quote missing output amount');
-
-            const outFormatted = formatUnits(BigInt(out), tokenOut.decimals);
+            const outWei = BigInt(data.buyAmount);
+            const outFormatted = formatUnits(outWei, tokenOut.decimals);
             setAmountOut(outFormatted);
 
-            const gasEstimateWei = data?.gasEstimate ?? data?.gasEstimateValue;
-            const gasEth = gasEstimateWei ? formatUnits(BigInt(gasEstimateWei), 18) : null;
+            // Source breakdown -> pick top by proportion
+            const sources = Array.isArray(data.sources) ? data.sources : [];
+            const bestSource = sources
+              .filter((s) => Number(s?.proportion) > 0)
+              .sort((a, b) => Number(b.proportion) - Number(a.proportion))[0];
 
-            // We show a single “best route” quote for now (real), instead of fake per-DEX quotes
             const bestQuote = {
-              dex: 'odos',
-              name: 'Best route (Odos)',
+              dex: bestSource?.name || '0x',
+              name: bestSource?.name ? `Best price via ${bestSource.name}` : 'Best price (0x)',
               icon: '⚡',
               amountOut: outFormatted,
-              gasEstimate: gasEth ? Number(gasEth).toFixed(6) : '—',
-              priceImpact: data?.priceImpactPercent != null ? Number(data.priceImpactPercent).toFixed(2) : '—',
+              gasEstimate: data.estimatedGas ? (Number(data.estimatedGas) / 1e6).toFixed(6) : '—',
+              priceImpact: '—',
             };
 
             setQuotes([bestQuote]);
             setSelectedDex('auto');
+            setSwapTx({
+              to: data.to,
+              data: data.data,
+              value: data.value || '0',
+              allowanceTarget: data.allowanceTarget,
+              sources,
+            });
+
+            // USD equivalents via DefiLlama
+            try {
+              const inAddr = toLlamaTokenAddress(tokenIn);
+              const outAddr2 = toLlamaTokenAddress(tokenOut);
+              const url = `https://coins.llama.fi/prices/current/base:${inAddr},base:${outAddr2}`;
+              const pr = await fetch(url).then((r) => r.json());
+              const inPrice = pr?.coins?.[`base:${inAddr}`]?.price;
+              const outPrice = pr?.coins?.[`base:${outAddr2}`]?.price;
+              setUsd({
+                inUsd: inPrice ? Number(amountIn) * Number(inPrice) : null,
+                outUsd: outPrice ? Number(outFormatted) * Number(outPrice) : null,
+              });
+            } catch {
+              setUsd({ inUsd: null, outUsd: null });
+            }
           } catch (e) {
-            // Fallback to spot price estimate if the router is temporarily unavailable
+            // Fallback to spot price estimate if quote provider is temporarily unavailable
             try {
               const out = await fetchLlamaSpotQuote({ tokenIn, tokenOut, amountIn });
               const outFormatted = String(out);
@@ -182,18 +193,20 @@ export default function SwapInterface() {
               setQuotes([
                 {
                   dex: 'llama',
-                  name: 'Spot price (fallback)',
+                  name: 'Spot estimate (fallback)',
                   icon: 'ℹ️',
                   amountOut: outFormatted,
                   gasEstimate: '—',
                   priceImpact: '—',
                 },
               ]);
-              setQuoteError('Router quote unavailable; showing spot estimate');
+              setQuoteError('Quote provider unavailable; showing spot estimate (cannot swap)');
+              setSwapTx(null);
             } catch (fallbackErr) {
               setQuoteError(e?.message || 'Failed to fetch quote');
               setQuotes([]);
               setAmountOut('');
+              setSwapTx(null);
             }
           } finally {
             setIsLoading(false);
@@ -217,14 +230,37 @@ export default function SwapInterface() {
   };
 
   const handleSwap = async () => {
-    if (!isConnected) return;
-    
+    if (!isConnected || !swapTx) return;
     setTxStatus('pending');
-    // Simulate transaction
-    setTimeout(() => {
+    try {
+      const sellAmountWei = parseUnits(amountIn, tokenIn.decimals);
+
+      // Approval if ERC20
+      if (!isNative(tokenIn)) {
+        const currentAllowance = allowance ?? 0n;
+        if (currentAllowance < sellAmountWei) {
+          await writeContractAsync({
+            address: tokenIn.address,
+            abi: ERC20_ABI,
+            functionName: 'approve',
+            args: [swapTx.allowanceTarget, sellAmountWei],
+          });
+        }
+      }
+
+      await sendTransactionAsync({
+        to: swapTx.to,
+        data: swapTx.data,
+        value: BigInt(swapTx.value || '0'),
+      });
+
       setTxStatus('success');
       setTimeout(() => setTxStatus(null), 3000);
-    }, 2000);
+    } catch (e) {
+      setTxStatus('error');
+      setQuoteError(e?.shortMessage || e?.message || 'Swap failed');
+      setTimeout(() => setTxStatus(null), 3000);
+    }
   };
 
   const TokenSelector = ({ token, onSelect, label }) => (
@@ -322,6 +358,9 @@ export default function SwapInterface() {
                   ? (tokenInBalanceLoading ? '…' : formatBalance(tokenInBalance))
                   : '—'}
               </span>
+              {usd.inUsd != null && (
+                <div className="text-xs text-gray-600 mt-0.5">${usd.inUsd.toFixed(2)}</div>
+              )}
             </div>
           </div>
           <div className="flex items-center gap-4">
@@ -363,6 +402,9 @@ export default function SwapInterface() {
                   ? (tokenOutBalanceLoading ? '…' : formatBalance(tokenOutBalance))
                   : '—'}
               </span>
+              {usd.outUsd != null && (
+                <div className="text-xs text-gray-600 mt-0.5">${usd.outUsd.toFixed(2)}</div>
+              )}
             </div>
           </div>
           <div className="flex items-center gap-4">
@@ -383,7 +425,7 @@ export default function SwapInterface() {
           </div>
         </div>
 
-        {/* DEX Selection */}
+        {/* Route */}
         {(quoteError || quotes.length > 0) && (
           <motion.div
             initial={{ opacity: 0, y: 10 }}
@@ -419,7 +461,9 @@ export default function SwapInterface() {
                     <span className="text-lg">{quote.icon}</span>
                     <div className="text-left">
                       <div className="font-medium text-sm">{quote.name}</div>
-                      <div className="text-xs text-gray-500">~{quote.gasEstimate} ETH gas</div>
+                      <div className="text-xs text-gray-500">
+                        {swapTx?.sources?.length ? `Route uses: ${swapTx.sources.filter(s=>Number(s.proportion)>0).map(s=>s.name).slice(0,3).join(', ')}` : '—'}
+                      </div>
                     </div>
                   </div>
                   <div className="text-right">
@@ -438,9 +482,11 @@ export default function SwapInterface() {
           whileHover={{ scale: 1.01 }}
           whileTap={{ scale: 0.99 }}
           onClick={handleSwap}
-          disabled={!isConnected || !amountIn || isLoading}
+          disabled={!isConnected || !amountIn || isLoading || !swapTx}
           className={`w-full mt-4 py-4 rounded-2xl font-display font-semibold text-lg transition-all duration-300 ${
             !isConnected
+              ? 'bg-white/10 text-gray-500 cursor-not-allowed'
+              : !swapTx
               ? 'bg-white/10 text-gray-500 cursor-not-allowed'
               : txStatus === 'pending'
               ? 'bg-flow-purple/50 text-white cursor-wait'
@@ -451,6 +497,8 @@ export default function SwapInterface() {
         >
           {!isConnected ? (
             'Connect Wallet'
+          ) : !swapTx ? (
+            'Quote unavailable'
           ) : txStatus === 'pending' ? (
             <span className="flex items-center justify-center gap-2">
               <Loader2 className="w-5 h-5 animate-spin" />
