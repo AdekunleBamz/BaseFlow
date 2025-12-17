@@ -4,7 +4,12 @@ const nextConfig = {
   images: {
     unoptimized: true,
   },
-  webpack: (config, { isServer }) => {
+  webpack: (config, { isServer, dev }) => {
+    // In dev, Next defaults to "eval-source-map" which makes huge chunks that are slow to evaluate
+    // and can trigger ChunkLoadError timeouts in the browser.
+    if (dev) {
+      config.devtool = false;
+    }
     if (!isServer) {
       config.resolve.fallback = {
         fs: false,
