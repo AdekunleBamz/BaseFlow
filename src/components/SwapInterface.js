@@ -19,12 +19,35 @@ const dexOptions = [
 const ODOS_BASE_URL = 'https://api.odos.xyz';
 const BASE_CHAIN_ID = 8453;
 const ODOS_NATIVE_TOKEN = '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE';
+const BASE_WETH = '0x4200000000000000000000000000000000000006';
 
 function toOdosTokenAddress(token) {
   if (!token?.address) return ODOS_NATIVE_TOKEN;
   // We store ETH as 0x000... which is not accepted by most quote APIs
   if (token.address === '0x0000000000000000000000000000000000000000') return ODOS_NATIVE_TOKEN;
   return token.address;
+}
+
+function toLlamaTokenAddress(token) {
+  if (!token?.address) return BASE_WETH;
+  if (token.address === '0x0000000000000000000000000000000000000000') return BASE_WETH;
+  return token.address;
+}
+
+async function fetchLlamaSpotQuote({ tokenIn, tokenOut, amountIn }) {
+  // Uses DefiLlama token prices as a fallback when the router is unavailable.
+  // This is a spot-price estimate (no route/gas), but avoids showing nonsense numbers.
+  const inAddr = toLlamaTokenAddress(tokenIn);
+  const outAddr = toLlamaTokenAddress(tokenOut);
+  const url = `https://coins.llama.fi/prices/current/base:${inAddr},base:${outAddr}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Price fallback failed (${res.status})`);
+  const data = await res.json();
+  const inPrice = data?.coins?.[`base:${inAddr}`]?.price;
+  const outPrice = data?.coins?.[`base:${outAddr}`]?.price;
+  if (!inPrice || !outPrice) throw new Error('Price fallback missing token price');
+  const out = (Number(amountIn) * Number(inPrice)) / Number(outPrice);
+  return out;
 }
 
 export default function SwapInterface() {
@@ -151,9 +174,27 @@ export default function SwapInterface() {
             setQuotes([bestQuote]);
             setSelectedDex('auto');
           } catch (e) {
-            setQuoteError(e?.message || 'Failed to fetch quote');
-            setQuotes([]);
-            setAmountOut('');
+            // Fallback to spot price estimate if the router is temporarily unavailable
+            try {
+              const out = await fetchLlamaSpotQuote({ tokenIn, tokenOut, amountIn });
+              const outFormatted = String(out);
+              setAmountOut(outFormatted);
+              setQuotes([
+                {
+                  dex: 'llama',
+                  name: 'Spot price (fallback)',
+                  icon: 'ℹ️',
+                  amountOut: outFormatted,
+                  gasEstimate: '—',
+                  priceImpact: '—',
+                },
+              ]);
+              setQuoteError('Router quote unavailable; showing spot estimate');
+            } catch (fallbackErr) {
+              setQuoteError(e?.message || 'Failed to fetch quote');
+              setQuotes([]);
+              setAmountOut('');
+            }
           } finally {
             setIsLoading(false);
           }
