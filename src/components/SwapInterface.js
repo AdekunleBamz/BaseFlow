@@ -18,6 +18,13 @@ const dexOptions = [
 
 const BASE_CHAIN_ID = 8453;
 const BASE_WETH = '0x4200000000000000000000000000000000000006';
+const ODOS_NATIVE_TOKEN = '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE';
+
+function toOdosTokenAddress(token) {
+  if (!token?.address) return ODOS_NATIVE_TOKEN;
+  if (token.address === '0x0000000000000000000000000000000000000000') return ODOS_NATIVE_TOKEN;
+  return token.address;
+}
 
 function toLlamaTokenAddress(token) {
   if (!token?.address) return BASE_WETH;
@@ -59,8 +66,6 @@ export default function SwapInterface() {
   const [usd, setUsd] = useState({ inUsd: null, outUsd: null });
 
   const isNative = (t) => t?.address === '0x0000000000000000000000000000000000000000';
-  const tokenInAddr = isNative(tokenIn) ? 'ETH' : tokenIn.address;
-  const tokenOutAddr = isNative(tokenOut) ? 'ETH' : tokenOut.address;
 
   const { sendTransactionAsync, data: swapHash, isPending: swapSending } = useSendTransaction();
   const { writeContractAsync } = useWriteContract();
@@ -108,7 +113,7 @@ export default function SwapInterface() {
     return v.toFixed(2);
   };
 
-  // Real quote fetching (Base mainnet) via 0x Swap API (gives calldata + router sources).
+  // Real quote fetching (Base mainnet) via Odos API (gives calldata + router sources).
   useEffect(() => {
     if (amountIn && parseFloat(amountIn) > 0) {
       setIsLoading(true);
@@ -127,20 +132,24 @@ export default function SwapInterface() {
 
             const amountInWei = parseUnits(amountIn, tokenIn.decimals);
 
-            const params = new URLSearchParams({
-              sellToken: tokenInAddr,
-              buyToken: tokenOutAddr,
-              sellAmount: amountInWei.toString(),
-              slippagePercentage: String((Number(slippage || '0.5') / 100).toFixed(4)),
-              takerAddress: address || '',
+            // Use Odos API via server-side proxy (works better on Base than 0x)
+            const res = await fetch('/api/quote/odos', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                chainId: BASE_CHAIN_ID,
+                inputTokens: [{ tokenAddress: toOdosTokenAddress(tokenIn), amount: amountInWei.toString() }],
+                outputTokens: [{ tokenAddress: toOdosTokenAddress(tokenOut), proportion: 1 }],
+                slippageLimitPercent: Number(slippage || '0.5'),
+                userAddr: address || '',
+                receiver: address || '',
+                compact: true,
+              }),
             });
-
-            // 0x Swap API on Base (public). If this endpoint changes, we can swap to another quote provider.
-            const res = await fetch(`https://base.api.0x.org/swap/v1/quote?${params.toString()}`);
             const data = await res.json();
-            if (!res.ok) throw new Error(data?.reason || data?.validationErrors?.[0]?.reason || 'Error getting quote');
+            if (!res.ok) throw new Error(data?.error || data?.message || 'Error getting quote');
 
-            const outWei = BigInt(data.buyAmount);
+            const outWei = BigInt(data.buyAmount || data.outAmounts?.[0] || '0');
             const outFormatted = formatUnits(outWei, tokenOut.decimals);
             setAmountOut(outFormatted);
 
@@ -151,8 +160,8 @@ export default function SwapInterface() {
               .sort((a, b) => Number(b.proportion) - Number(a.proportion))[0];
 
             const bestQuote = {
-              dex: bestSource?.name || '0x',
-              name: bestSource?.name ? `Best price via ${bestSource.name}` : 'Best price (0x)',
+              dex: bestSource?.name || 'Odos',
+              name: bestSource?.name ? `Best price via ${bestSource.name}` : 'Best price (Odos)',
               icon: '⚡',
               amountOut: outFormatted,
               gasEstimate: data.estimatedGas ? (Number(data.estimatedGas) / 1e6).toFixed(6) : '—',
@@ -220,7 +229,7 @@ export default function SwapInterface() {
       setQuotes([]);
       setQuoteError('');
     }
-  }, [amountIn, tokenIn, tokenOut, slippage]);
+  }, [amountIn, tokenIn, tokenOut, slippage, address]);
 
   const switchTokens = () => {
     const temp = tokenIn;
